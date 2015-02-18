@@ -44,7 +44,6 @@ module OmniAuth
       
       def request_phase
         Rails.logger.debug "====== Entering Heart::request_phase ======"
-        Rails.logger.debug "------ Redirecting to: #{authorize_path} ------"
         redirect(authorize_path)
       end
 
@@ -86,7 +85,7 @@ module OmniAuth
       def authorize_path
         @state = "#{Time.now.to_i}/#{SecureRandom.hex(18)}"
 
-        @authorize_path ||= auth_server_config["authorization_endpoint"] + "?" +
+        auth_server_config["authorization_endpoint"] + "?" +
                                 "response_type=code&" +
                                 "client_id=#{client_options.client_id}&" + 
                                 "redirect_uri=#{callback_url}&" +
