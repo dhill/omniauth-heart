@@ -8,19 +8,10 @@ module OmniAuth
 
       include OmniAuth::Strategy
 
-      args [ 
-        :request,                   # Original request from client
-        :auth_server_uri,           # Base URI for the authorization server
-        :callback_suffix,           # Additional params for callback from auth server
-        :client_id,                 # Client ID registered with authorization server
-        :jwt_signing_key            # Key used to sign JSON Web Tokens (private key)
-      ]
-
       # Default options
       option :claim_expiration, 60  # Number of seconds token claims should last
 
       option :client_options, {
-        request: nil,               # Original request from client
         auth_server_uri: nil,       # Base URI for the authorization server
         callback_suffix: nil,       # Additional params for callback from auth server
         client_id: nil,             # Client ID registered with authorization server
@@ -43,7 +34,7 @@ module OmniAuth
       # authorization server with the authorization code.
       
       def request_phase
-        Rails.logger.debug "====== Entering Heart::request_phase ======"
+        log :debug, "====== Entering Heart::request_phase ======"
         redirect(authorize_path)
       end
 
@@ -56,10 +47,10 @@ module OmniAuth
       # the resource server.
 
       def callback_phase
-        Rails.logger.debug "====== Entering Heart::callback_phase ======"
+        log :debug, "====== Entering Heart::callback_phase ======"
 
         @access_token = request_access_token(request)
-        Rails.logger.debug "------ Access token = #{@access_token} ------"
+        log :debug, "------ Access token = #{@access_token} ------"
 
         super
       end
@@ -80,13 +71,13 @@ module OmniAuth
       #   +String+::                Path and parameters to get authorization code
 
       def authorize_path
-        @state = "#{Time.now.to_i}/#{SecureRandom.hex(18)}"
+        session[:state] = "#{Time.now.to_i}/#{SecureRandom.hex(18)}"
 
         auth_server_config["authorization_endpoint"] + "?" +
                                 "response_type=code&" +
                                 "client_id=#{client_options.client_id}&" + 
                                 "redirect_uri=#{generate_callback_path}&" +
-                                "state=#{@state}"
+                                "state=#{session[:state]}"
       end
 
       #-------------------------------------------------------------------------------
@@ -107,10 +98,10 @@ module OmniAuth
       #   +String+::                Access token if successful, otherwise nil
 
       def request_access_token(request_from_server)
-        Rails.logger.debug "========= Entering AuthorizationServer::request_access_token ========="
+        log :debug, "========= Entering AuthorizationServer::request_access_token ========="
 
         if valid_state?(request_from_server.params["state"])
-          Rails.logger.debug "--------- State is valid ---------"
+          log :debug, "--------- State is valid ---------"
 
           response = auth_server.post(auth_server_config["token_endpoint"]) do |request|
             request.body = {
@@ -122,13 +113,13 @@ module OmniAuth
               "client_assertion"          => jwt_token(token_endpoint_claims)
             }
 
-            Rails.logger.debug "--------- request.headers = #{request.headers.inspect} ----------"
-            Rails.logger.debug "--------- request.body = #{request.body.inspect} ---------"
+            log :debug, "--------- request.headers = #{request.headers.inspect} ----------"
+            log :debug, "--------- request.body = #{request.body.inspect} ---------"
           end
 
-          Rails.logger.debug "--------- response.headers = #{response.headers.inspect} ----------"
-          Rails.logger.debug "--------- response.body = #{response.body} ----------"
-          Rails.logger.debug "--------- response.status = #{response.status} ----------"
+          log :debug, "--------- response.headers = #{response.headers.inspect} ----------"
+          log :debug, "--------- response.body = #{response.body} ----------"
+          log :debug, "--------- response.status = #{response.status} ----------"
 
           if OK == response.status
             parsed_response = JSON.parse(response.body)
@@ -138,7 +129,7 @@ module OmniAuth
           end
         else
           # Log, but ignore potential CSRF attacks
-          Rails.logger.warn "///////// State is invalid - possible CSRF attack /////////"
+          log :warn, "///////// State is invalid - possible CSRF attack /////////"
         end
       end
 
@@ -164,7 +155,7 @@ module OmniAuth
       # variable.
 
       def auth_server
-        @auth_server ||= Faraday.new(options.auth_server_uri, 
+        @auth_server ||= Faraday.new(client_options.auth_server_uri, 
                                           :ssl => {:verify => false}) do |builder|
           builder.request   :url_encoded    # Encode request parameters as "www-form-urlencoded"
           builder.response  :logger         # Log request and response to STDOUT
@@ -182,7 +173,7 @@ module OmniAuth
       #   +Hash+::              Hash of endpoints and settings for authorization server
 
       def discover_config
-        Rails.logger.debug "------ Calling #{config_endpoint} ------"
+        log :debug, "------ Calling #{config_endpoint} ------"
 
         response = auth_server.get("#{config_endpoint}")
 
@@ -203,8 +194,8 @@ module OmniAuth
       #   +String+::            Signed JSON Web Token
 
       def jwt_token(claims)
-        Rails.logger.debug "    ------ claims = #{claims.inspect} ------"
-        Rails.logger.debug "    ------ jwt_signing_key = #{client_options.jwt_signing_key} ------"
+        log :debug, "    ------ claims = #{claims.inspect} ------"
+        log :debug, "    ------ jwt_signing_key = #{client_options.jwt_signing_key} ------"
         # Sign our claims with our private key.  The authorization server will 
         # contact our jwks_uri endpoint to get our public key to decode the JWT.
 
@@ -247,9 +238,8 @@ module OmniAuth
       #   +Boolean+::         true if state values match, otherwise false.
 
       def valid_state?(state)
-        Rails.logger.debug "    ------ Expected state #{@state}, received #{state} ------"
-        true
-        #@state == state
+        log :debug, "    ------ Expected state #{session[:state]}, received #{state} ------"
+        session[:state] == state
       end
 
       #-------------------------------------------------------------------------------
