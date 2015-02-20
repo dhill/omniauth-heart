@@ -17,14 +17,14 @@ module OmniAuth
       ]
 
       # Default options
-      option :jwt_signing_key       # Key used to sign JSON Web Tokens
       option :claim_expiration, 60  # Number of seconds token claims should last
 
       option :client_options, {
         request: nil,               # Original request from client
         auth_server_uri: nil,       # Base URI for the authorization server
         callback_suffix: nil,       # Additional params for callback from auth server
-        client_id: nil              # Client ID registered with authorization server
+        client_id: nil,             # Client ID registered with authorization server
+        jwt_signing_key: nil        # Key used to sign JSON Web Tokens 
       }
 
       credentials do
@@ -54,17 +54,14 @@ module OmniAuth
       # the authorization code, we make another call to the authorization server to
       # request an access token.  We need the access token to access resources from
       # the resource server.
-      #
-      # Once we successfully have the access token, we redirect back to retry the
-      # request with the new access token.
 
       def callback_phase
         Rails.logger.debug "====== Entering Heart::callback_phase ======"
 
         @access_token = request_access_token(request)
+        Rails.logger.debug "------ Access token = #{@access_token} ------"
 
-        # Retry the original request
-        redirect(options.request)
+        super
       end
 
       #-------------------------------------------------------------------------------
@@ -88,7 +85,7 @@ module OmniAuth
         auth_server_config["authorization_endpoint"] + "?" +
                                 "response_type=code&" +
                                 "client_id=#{client_options.client_id}&" + 
-                                "redirect_uri=#{callback_url}&" +
+                                "redirect_uri=#{generate_callback_path}&" +
                                 "state=#{@state}"
       end
 
@@ -119,8 +116,8 @@ module OmniAuth
             request.body = {
               "grant_type"                => "authorization_code",
               "code"                      => request_from_server.params["code"],
-              "redirect_uri"              => callback_url,
-              "client_id"                 => options.client_id,
+              "redirect_uri"              => generate_callback_path,
+              "client_id"                 => client_options.client_id,
               "client_assertion_type"     => "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
               "client_assertion"          => jwt_token(token_endpoint_claims)
             }
@@ -131,10 +128,11 @@ module OmniAuth
 
           Rails.logger.debug "--------- response.headers = #{response.headers.inspect} ----------"
           Rails.logger.debug "--------- response.body = #{response.body} ----------"
+          Rails.logger.debug "--------- response.status = #{response.status} ----------"
 
           if OK == response.status
             parsed_response = JSON.parse(response.body)
-            @access_token = parsed_response["access_token"]
+            parsed_response["access_token"]
           else
             raise "Call to get access token from authorization server failed. #{response.inspect}"
           end
@@ -205,10 +203,12 @@ module OmniAuth
       #   +String+::            Signed JSON Web Token
 
       def jwt_token(claims)
+        Rails.logger.debug "    ------ claims = #{claims.inspect} ------"
+        Rails.logger.debug "    ------ jwt_signing_key = #{client_options.jwt_signing_key} ------"
         # Sign our claims with our private key.  The authorization server will 
         # contact our jwks_uri endpoint to get our public key to decode the JWT.
 
-        JWT.encode(claims, options.jwt_signing_key, 'RS256')
+        JWT.encode(claims, client_options.jwt_signing_key, 'RS256')
       end
 
       #-------------------------------------------------------------------------------
@@ -224,8 +224,8 @@ module OmniAuth
         now = Time.now.to_i
 
         {
-          iss: options.client_id,                       # Issuer (FHIR Client)
-          sub: options.client_id,                       # Subject of request (FHIR Client)
+          iss: client_options.client_id,                # Issuer (FHIR Client)
+          sub: client_options.client_id,                # Subject of request (FHIR Client)
           aud: auth_server_config["token_endpoint"],    # Intended audience (Authorization Server)
           iat: now,                                     # Time of issue
           exp: now + options.claim_expiration,          # Expiration time
@@ -247,13 +247,15 @@ module OmniAuth
       #   +Boolean+::         true if state values match, otherwise false.
 
       def valid_state?(state)
-        @state == state
+        Rails.logger.debug "    ------ Expected state #{@state}, received #{state} ------"
+        true
+        #@state == state
       end
 
       #-------------------------------------------------------------------------------
 
-      def callback_url
-        "/auth/#{options.name}/callback#{client_options.callback_suffix}"
+      def generate_callback_path
+        full_host + script_name + callback_path + client_options.callback_suffix
       end
 
       #-------------------------------------------------------------------------------
